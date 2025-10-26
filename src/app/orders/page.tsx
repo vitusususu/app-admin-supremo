@@ -52,11 +52,11 @@ export default function GlobalOrdersPage() {
         setIsLoading(true);
         try {
           const ordersSnapshot = await getDocs(collection(db, 'orders'));
-          const ordersList = ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => b.createdAt.seconds - a.createdAt.seconds) as Order[];
+          const ordersList = ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order)).sort((a, b) => b.createdAt.seconds - a.createdAt.seconds);
           setOrders(ordersList);
 
           const storesSnapshot = await getDocs(collection(db, 'stores'));
-          const storesList = storesSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name })) as Store[];
+          const storesList = storesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Store));
           setStores(storesList);
         } catch (error) {
           console.error('Erro ao buscar dados:', error);
