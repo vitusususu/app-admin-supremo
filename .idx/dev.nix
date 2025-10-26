@@ -19,7 +19,7 @@
       enable = true;
       previews = {
         web = {
-          command = ["sh" "-c" "cd app-admin-supremo && npm run dev -- --port $PORT"];
+          command = ["sh" "-c" "npm run dev -- --port $PORT"];
           manager = "web";
         };
       };
@@ -28,11 +28,11 @@
     workspace = {
       # Runs when a workspace is first created
       onCreate = {
-        npm-install = "cd app-admin-supremo && npm install";
+        npm-install = "npm install";
       };
       # Runs when the workspace is (re)started
       onStart = {
-        dev-server = "cd app-admin-supremo && npm run dev";
+        dev-server = "npm run dev";
       };
     };
   };

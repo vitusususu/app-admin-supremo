@@ -1,0 +1,159 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // --- ALTERAÇÃO CIRÚRGICA INICIA AQUI ---
+
+    // Função auxiliar para verificar se o usuário é um SUPER_ADMIN
+    // Alterado de `request.auth.token.role` para `get()`, que lê o documento do usuário.
+    function isSuperAdmin() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPER_ADMIN';
+    }
+
+    // Função auxiliar para verificar se o usuário é um STORE_ADMIN
+    // A lógica foi dividida: esta função checa o role, e o `storeId` é comparado separadamente.
+    function isStoreAdmin() {
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'STORE_ADMIN';
+    }
+
+    // Função para obter o `storeId` do usuário logado a partir de seu documento.
+    function getUserStoreId() {
+        return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.storeId;
+    }
+
+    // --- FIM DA ALTERAÇÃO DAS FUNÇÕES ---
+
+
+    // Regras para a coleção de produtos (filtrados por storeId)
+    // A chamada a `isStoreAdmin` foi atualizada para a nova lógica. O resto permanece igual.
+    match /products/{productId} {
+      allow read: if request.auth != null && (isSuperAdmin() || (isStoreAdmin() && getUserStoreId() == resource.data.storeId));
+      allow create, update, delete: if isSuperAdmin() || (isStoreAdmin() && getUserStoreId() == resource.data.storeId);
+      // Validações para criação de produtos (INTOCADAS)
+      allow create: if request.auth != null &&
+        request.resource.data.keys().hasAll(['name', 'description', 'price', 'imageUrl', 'storeId']) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 100 &&
+        request.resource.data.description is string &&
+        request.resource.data.description.size() > 0 &&
+        request.resource.data.description.size() <= 500 &&
+        request.resource.data.price is number &&
+        request.resource.data.price > 0 &&
+        request.resource.data.price <= 10000 &&
+        request.resource.data.imageUrl is string &&
+        request.resource.data.imageUrl.matches('https://i\\.ibb\\.co/.*') ||
+        request.resource.data.imageUrl.matches('https://i\\.imgbb\\.com/.*') &&
+        request.resource.data.storeId is string &&
+        request.resource.data.storeId.size() > 0;
+    }
+
+    // Regras para a coleção de pedidos (filtrados por storeId)
+    // A chamada a `isStoreAdmin` foi atualizada. O resto permanece igual.
+    match /orders/{orderId} {
+      allow read: if request.auth != null && (isSuperAdmin() || (isStoreAdmin() && getUserStoreId() == resource.data.storeId) || request.auth.uid == resource.data.userId);
+      allow update: if isSuperAdmin() || (isStoreAdmin() && getUserStoreId() == resource.data.storeId);
+      // Validações para criação de pedidos (INTOCADAS)
+      allow create: if request.auth != null &&
+        request.resource.data.keys().hasAll(['items', 'address', 'city', 'state', 'zipCode', 'paymentMethod', 'total', 'userId', 'status', 'storeId']) &&
+        request.resource.data.items is list &&
+        request.resource.data.items.size() > 0 &&
+        request.resource.data.address is string &&
+        request.resource.data.address.size() > 0 &&
+        request.resource.data.address.size() <= 200 &&
+        request.resource.data.city is string &&
+        request.resource.data.city.size() > 0 &&
+        request.resource.data.city.size() <= 50 &&
+        request.resource.data.state is string &&
+        request.resource.data.state.size() > 0 &&
+        request.resource.data.state.size() <= 50 &&
+        request.resource.data.zipCode is string &&
+        request.resource.data.zipCode.matches('^\\d{5}-?\\d{3}$') &&
+        request.resource.data.paymentMethod in ['credit_card', 'cash_on_delivery'] &&
+        request.resource.data.total is number &&
+        request.resource.data.total >= 0 &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.storeId is string &&
+        request.resource.data.storeId.size() > 0;
+    }
+
+    // Regras para a coleção de usuários
+    match /users/{userId} {
+      // A permissão de leitura do próprio usuário foi adicionada aqui.
+      // Isso é CRÍTICO para que as funções `isSuperAdmin` e `isStoreAdmin` funcionem.
+      allow read: if request.auth != null && (isSuperAdmin() || request.auth.uid == userId);
+      allow delete: if isSuperAdmin();
+
+      // Regra unificada para criação de usuários (INTOCADA)
+      allow create: if isSuperAdmin() &&
+        request.resource.data.email is string &&
+        request.resource.data.email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') &&
+        request.resource.data.role in ['STORE_ADMIN', 'SUPER_ADMIN', 'CUSTOMER'] &&
+        (
+          (request.resource.data.role == 'STORE_ADMIN' &&
+           request.resource.data.storeId is string &&
+           request.resource.data.storeId.size() > 0 &&
+           exists(/databases/$(database)/documents/stores/$(request.resource.data.storeId))) ||
+          (request.resource.data.role == 'SUPER_ADMIN' && !request.resource.data.keys().hasAny(['storeId'])) ||
+          (request.resource.data.role == 'CUSTOMER' && !request.resource.data.keys().hasAny(['storeId']))
+        );
+
+      // Regra unificada para atualização de usuários (INTOCADA)
+      allow update: if isSuperAdmin() &&
+        request.resource.data.email is string &&
+        request.resource.data.email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') &&
+        request.resource.data.role in ['STORE_ADMIN', 'SUPER_ADMIN', 'CUSTOMER'] &&
+        (
+          (request.resource.data.role == 'STORE_ADMIN' &&
+           request.resource.data.storeId is string &&
+           request.resource.data.storeId.size() > 0 &&
+           exists(/databases/$(database)/documents/stores/$(request.resource.data.storeId))) ||
+          (request.resource.data.role == 'SUPER_ADMIN' && !request.resource.data.keys().hasAny(['storeId'])) ||
+          (request.resource.data.role == 'CUSTOMER' && !request.resource.data.keys().hasAny(['storeId']))
+        );
+    }
+
+    // Regras para a coleção de lojas
+    // A chamada a `isStoreAdmin` foi atualizada. O resto permanece igual.
+    match /stores/{storeId} {
+      allow read: if request.auth != null && (isSuperAdmin() || (isStoreAdmin() && getUserStoreId() == storeId));
+      allow create, update, delete: if isSuperAdmin();
+      // Validações para criação e atualização de lojas (INTOCADAS)
+      allow create, update: if request.auth != null &&
+        request.resource.data.keys().hasAll(['name', 'address', 'city', 'state', 'zipCode']) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 100 &&
+        request.resource.data.address is string &&
+        request.resource.data.address.size() > 0 &&
+        request.resource.data.address.size() <= 200 &&
+        request.resource.data.city is string &&
+        request.resource.data.city.size() > 0 &&
+        request.resource.data.city.size() <= 50 &&
+        request.resource.data.state is string &&
+        request.resource.data.state.size() > 0 &&
+        request.resource.data.state.size() <= 50 &&
+        request.resource.data.zipCode is string &&
+        request.resource.data.zipCode.matches('^\\d{5}-?\\d{3}$') &&
+        // Optional adminId validation (INTOCADA)
+        (!request.resource.data.keys().hasAny(['adminId']) ||
+         (request.resource.data.adminId is string &&
+          request.resource.data.adminId.size() > 0 &&
+          exists(/databases/$(database)/documents/users/$(request.resource.data.adminId)) &&
+          get(/databases/$(database)/documents/users/$(request.resource.data.adminId)).data.role == 'STORE_ADMIN'));
+    }
+
+    // Regras para a coleção de carrinhos (filtrados por storeId)
+    match /carts/{cartId} {
+      allow read, write: if request.auth != null && request.auth.uid == cartId;
+    }
+
+    // Bloqueio padrão para outros documentos
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
