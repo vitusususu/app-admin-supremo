@@ -178,13 +178,13 @@ export default function GlobalProductsPage() {
       </div>
 
       {/* Modal de Edição */}
-      {editingProduct && (
+      {isModalOpen && editingProduct && (
         <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Editar Produto">
             <div className="space-y-4">
-                <input name="name" type="text" value={editingProduct.name} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
-                <input name="description" type="text" value={editingProduct.description} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
-                <input name="price" type="number" value={editingProduct.price} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
-                <select name="storeId" value={editingProduct.storeId} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg">
+                <input name="name" type="text" value={editingProduct?.name || ''} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <input name="description" type="text" value={editingProduct?.description || ''} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <input name="price" type="number" value={editingProduct?.price || 0} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <select name="storeId" value={editingProduct?.storeId || ''} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg">
                     {stores.map(store => <option key={store.id} value={store.id}>{store.name}</option>)}
                 </select>
                 <div className="flex justify-end space-x-4">
