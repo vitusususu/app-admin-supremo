@@ -199,7 +199,7 @@ export default function StoresPage() {
       <ul>
         {stores.map((store) => (
           <li key={store.id} className="border p-4 mb-4 rounded shadow">
-            {editingStore?.id === store.id ? (
+            {editingStore && editingStore.id === store.id ? (
               <div>
                 <h3 className="text-xl font-bold mb-2">Editando: {store.name}</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
