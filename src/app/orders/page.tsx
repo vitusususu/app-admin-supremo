@@ -73,6 +73,7 @@ export default function GlobalOrdersPage() {
       const orderRef = doc(db, 'orders', orderId);
       await updateDoc(orderRef, { status: newStatus });
       setOrders(prev => prev.map(order => order.id === orderId ? { ...order, status: newStatus } : order));
+      alert('Status atualizado com sucesso!');
     } catch (error) {
       console.error('Erro ao atualizar status:', error);
       alert('Falha ao atualizar o status.');
