@@ -2,13 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { db } from '../../lib/firebase';
-import {
-  collection,
-  getDocs,
-  updateDoc,
-  doc,
-} from 'firebase/firestore';
+import { db } from '../../lib/firebase-client';
+import { collection, getDocs, updateDoc, doc } from 'firebase/firestore';
+import Spinner from '../../components/Spinner';
+import Modal from '../../components/Modal';
 
 interface OrderItem {
   productId: string;
@@ -18,7 +15,7 @@ interface OrderItem {
 }
 
 interface Order {
-  id?: string;
+  id: string;
   storeId: string;
   userId: string;
   userName: string;
@@ -26,106 +23,134 @@ interface Order {
   items: OrderItem[];
   total: number;
   status: 'pending' | 'processing' | 'completed' | 'cancelled';
-  createdAt: any; // Firebase Timestamp
+  createdAt: { seconds: number; nanoseconds: number; };
 }
 
+interface Store {
+  id: string;
+  name: string;
+}
+
+const statusColors: { [key in Order['status']]: string } = {
+  pending: 'bg-yellow-100 text-yellow-800',
+  processing: 'bg-blue-100 text-blue-800',
+  completed: 'bg-green-100 text-green-800',
+  cancelled: 'bg-red-100 text-red-800',
+};
+
 export default function GlobalOrdersPage() {
-  const { user, isSuperAdmin, loading } = useAuth();
+  const { isSuperAdmin } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [stores, setStores] = useState<{ id: string; name: string }[]>([]);
+  const [stores, setStores] = useState<Store[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
 
   useEffect(() => {
-    const fetchOrdersAndStores = async () => {
+    const fetchData = async () => {
       if (isSuperAdmin) {
-        // Fetch all orders
-        const ordersCollection = collection(db, 'orders');
-        const ordersSnapshot = await getDocs(ordersCollection);
-        const ordersList = ordersSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Order[];
-        setOrders(ordersList);
+        setIsLoading(true);
+        try {
+          const ordersSnapshot = await getDocs(collection(db, 'orders'));
+          const ordersList = ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => b.createdAt.seconds - a.createdAt.seconds) as Order[];
+          setOrders(ordersList);
 
-        // Fetch all stores for display
-        const storesCollection = collection(db, 'stores');
-        const storesSnapshot = await getDocs(storesCollection);
-        const storesList = storesSnapshot.docs.map((doc) => ({
-          id: doc.id,
-          name: doc.data().name,
-        }));
-        setStores(storesList);
+          const storesSnapshot = await getDocs(collection(db, 'stores'));
+          const storesList = storesSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name })) as Store[];
+          setStores(storesList);
+        } catch (error) {
+          console.error('Erro ao buscar dados:', error);
+        } finally {
+          setIsLoading(false);
+        }
       }
     };
+    fetchData();
+  }, [isSuperAdmin]);
 
-    if (!loading) {
-      fetchOrdersAndStores();
-    }
-  }, [isSuperAdmin, loading]);
-
-  const handleUpdateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
-    if (isSuperAdmin) {
+  const handleUpdateStatus = async (orderId: string, newStatus: Order['status']) => {
+    try {
       const orderRef = doc(db, 'orders', orderId);
       await updateDoc(orderRef, { status: newStatus });
-      // Refetch orders
-      const ordersCollection = collection(db, 'orders');
-      const ordersSnapshot = await getDocs(ordersCollection);
-      const ordersList = ordersSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Order[];
-      setOrders(ordersList);
+      setOrders(prev => prev.map(order => order.id === orderId ? { ...order, status: newStatus } : order));
+    } catch (error) {
+      console.error('Erro ao atualizar status:', error);
+      alert('Falha ao atualizar o status.');
     }
   };
-
-  if (loading) {
-    return <div>Carregando...</div>;
-  }
-
-  if (!isSuperAdmin) {
-    return <div>Acesso negado. Você não é um administrador supremo.</div>;
+  
+  const viewOrderDetails = (order: Order) => {
+    setSelectedOrder(order);
+    setIsModalOpen(true);
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    <>
       <h1 className="text-3xl font-bold mb-4">Gerenciamento Global de Pedidos</h1>
-
-      <h2 className="text-2xl font-semibold mb-4">Todos os Pedidos</h2>
-      <ul>
-        {orders.map((order) => (
-          <li key={order.id} className="border p-4 mb-4 rounded shadow">
-            <h3 className="text-xl font-bold">Pedido #{order.id}</h3>
-            <p>Loja: {stores.find(s => s.id === order.storeId)?.name || 'N/A'}</p>
-            <p>Cliente: {order.userName} ({order.userEmail})</p>
-            <p>Total: R${order.total.toFixed(2)}</p>
-            <p>Status: {order.status}</p>
-            <p>Data: {new Date(order.createdAt.toDate()).toLocaleString()}</p>
-            <h4 className="font-semibold mt-2">Itens:</h4>
-            <ul>
-              {order.items.map((item, index) => (
-                <li key={index}>
-                  {item.name} (x{item.quantity}) - R${item.price.toFixed(2)}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-4">
-              <label htmlFor={`status-${order.id}`} className="mr-2">Atualizar Status:</label>
-              <select
-                id={`status-${order.id}`}
-                value={order.status}
-                onChange={(e) =>
-                  handleUpdateOrderStatus(order.id!, e.target.value as Order['status'])
-                }
-                className="border p-2 rounded"
-              >
-                <option value="pending">Pendente</option>
-                <option value="processing">Em Processamento</option>
-                <option value="completed">Concluído</option>
-                <option value="cancelled">Cancelado</option>
-              </select>
+      <div className="bg-white p-6 rounded-lg shadow-md">
+        <h2 className="text-2xl font-semibold mb-5 text-gray-800">Todos os Pedidos</h2>
+        {isLoading ? (
+          <div className="flex justify-center p-8"><Spinner /></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pedido</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Loja</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Data</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {orders.map(order => (
+                  <tr key={order.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">#{order.id.substring(0, 7)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{order.userName}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{stores.find(s => s.id === order.storeId)?.name || 'N/A'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-800">R$ {order.total.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(order.createdAt.seconds * 1000).toLocaleDateString()}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <select value={order.status} onChange={(e) => handleUpdateStatus(order.id, e.target.value as Order['status'])} className={`p-1.5 rounded-lg text-xs font-semibold border-none focus:ring-2 focus:ring-offset-1 ${statusColors[order.status]}`}>
+                          <option value="pending">Pendente</option>
+                          <option value="processing">Processando</option>
+                          <option value="completed">Concluído</option>
+                          <option value="cancelled">Cancelado</option>
+                      </select>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <button onClick={() => viewOrderDetails(order)} className="text-indigo-600 hover:text-indigo-900">Ver Detalhes</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      
+      {selectedOrder && (
+        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={`Detalhes do Pedido #${selectedOrder.id.substring(0,7)}`}>
+            <div className="space-y-4">
+                <p><span className="font-semibold">Cliente:</span> {selectedOrder.userEmail}</p>
+                <p><span className="font-semibold">Total:</span> R$ {selectedOrder.total.toFixed(2)}</p>
+                <div>
+                    <h4 className="font-semibold mb-2">Itens do Pedido:</h4>
+                    <ul className="list-disc list-inside space-y-1 text-sm text-gray-600">
+                        {selectedOrder.items.map((item, index) => (
+                            <li key={index}>{item.name} (x{item.quantity}) - R$ {item.price.toFixed(2)} cada</li>
+                        ))}
+                    </ul>
+                </div>
+                <div className="flex justify-end pt-4">
+                    <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-white bg-indigo-600 rounded-lg">Fechar</button>
+                </div>
             </div>
-          </li>
-        ))}
-      </ul>
-    </div>
+        </Modal>
+      )}
+    </>
   );
 }

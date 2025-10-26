@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { db } from '../../lib/firebase';
+import { db } from '../../lib/firebase-client';
 import {
   collection,
   getDocs,
@@ -11,265 +11,170 @@ import {
   deleteDoc,
   doc,
 } from 'firebase/firestore';
+import Spinner from '../../components/Spinner';
+import Modal from '../../components/Modal';
 
-// Interface 'Store' atualizada para corresponder às regras do Firestore
 interface Store {
-  id?: string;
+  id: string;
   name: string;
   address: string;
   city: string;
   state: string;
   zipCode: string;
-  adminId?: string; // Opcional, para associar um administrador de loja
 }
 
 export default function StoresPage() {
-  const { user, isSuperAdmin, loading } = useAuth();
+  const { isSuperAdmin } = useAuth();
   const [stores, setStores] = useState<Store[]>([]);
-  // Estado 'newStore' atualizado para incluir os campos obrigatórios
-  const [newStore, setNewStore] = useState<Omit<Store, 'id' | 'adminId'>>({
-    name: '',
-    address: '',
-    city: '',
-    state: '',
-    zipCode: '',
-  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
+  const [newStore, setNewStore] = useState({ name: '', address: '', city: '', state: '', zipCode: '' });
 
   useEffect(() => {
     const fetchStores = async () => {
       if (isSuperAdmin) {
+        setIsLoading(true);
         try {
-          const storesCollection = collection(db, 'stores');
-          const querySnapshot = await getDocs(storesCollection);
-          const storesList = querySnapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          })) as Store[];
+          const querySnapshot = await getDocs(collection(db, 'stores'));
+          const storesList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Store[];
           setStores(storesList);
         } catch (error) {
           console.error("Erro ao buscar lojas:", error);
-          // Adicione aqui um feedback para o usuário, se desejar
+        } finally {
+          setIsLoading(false);
         }
       }
     };
+    fetchStores();
+  }, [isSuperAdmin]);
 
-    if (!loading) {
-      fetchStores();
-    }
-  }, [isSuperAdmin, loading]);
-
-  const handleAddStore = async () => {
-    if (isSuperAdmin) {
-      // Garante que todos os campos obrigatórios sejam preenchidos
-      if (!newStore.name || !newStore.address || !newStore.city || !newStore.state || !newStore.zipCode) {
-        alert('Por favor, preencha todos os campos obrigatórios.');
-        return;
-      }
-      try {
-        await addDoc(collection(db, 'stores'), newStore);
-        setNewStore({ name: '', address: '', city: '', state: '', zipCode: '' });
-        // Atualiza a lista de lojas após a adição
-        const storesCollection = collection(db, 'stores');
-        const querySnapshot = await getDocs(storesCollection);
-        const storesList = querySnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Store[];
-        setStores(storesList);
-      } catch (error) {
-        console.error("Erro ao adicionar loja:", error);
-        alert('Ocorreu um erro ao adicionar a loja. Verifique as permissões e tente novamente.');
-      }
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    if (editingStore) {
+      setEditingStore({ ...editingStore, [name]: value });
+    } else {
+      setNewStore({ ...newStore, [name]: value });
     }
   };
 
-  const handleEditStore = (store: Store) => {
+  const handleAddStore = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const docRef = await addDoc(collection(db, 'stores'), newStore);
+      setStores(prev => [...prev, { id: docRef.id, ...newStore }]);
+      setNewStore({ name: '', address: '', city: '', state: '', zipCode: '' });
+    } catch (error) {
+      console.error("Erro ao adicionar loja:", error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const openEditModal = (store: Store) => {
     setEditingStore(store);
+    setIsModalOpen(true);
   };
 
   const handleUpdateStore = async () => {
-    if (editingStore && isSuperAdmin) {
-      try {
-        const storeRef = doc(db, 'stores', editingStore.id!);
-        // O objeto de atualização também deve incluir todos os campos obrigatórios
-        await updateDoc(storeRef, {
-          name: editingStore.name,
-          address: editingStore.address,
-          city: editingStore.city,
-          state: editingStore.state,
-          zipCode: editingStore.zipCode,
-        });
-        setEditingStore(null);
-        // Atualiza a lista de lojas após a edição
-        const storesCollection = collection(db, 'stores');
-        const querySnapshot = await getDocs(storesCollection);
-        const storesList = querySnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Store[];
-        setStores(storesList);
-      } catch (error) {
-        console.error("Erro ao atualizar loja:", error);
-        alert('Ocorreu um erro ao atualizar a loja. Verifique as permissões e tente novamente.');
-      }
+    if (!editingStore) return;
+    setIsSubmitting(true);
+    try {
+      const storeRef = doc(db, 'stores', editingStore.id);
+      await updateDoc(storeRef, { ...editingStore });
+      setStores(prev => prev.map(s => s.id === editingStore.id ? editingStore : s));
+      setIsModalOpen(false);
+      setEditingStore(null);
+    } catch (error) {
+      console.error("Erro ao atualizar loja:", error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDeleteStore = async (id: string) => {
-    if (isSuperAdmin) {
-      try {
-        await deleteDoc(doc(db, 'stores', id));
-        // Atualiza a lista de lojas após a exclusão
-        const storesCollection = collection(db, 'stores');
-        const querySnapshot = await getDocs(storesCollection);
-        const storesList = querySnapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Store[];
-        setStores(storesList);
-      } catch (error) {
-        console.error("Erro ao excluir loja:", error);
-        alert('Ocorreu um erro ao excluir a loja. Verifique as permissões e tente novamente.');
-      }
+    if (window.confirm('Tem certeza que deseja excluir esta loja? Todos os produtos e pedidos associados podem ser afetados.')) {
+        try {
+            await deleteDoc(doc(db, 'stores', id));
+            setStores(prev => prev.filter(s => s.id !== id));
+        } catch (error) {
+            console.error("Erro ao excluir loja:", error);
+        }
     }
   };
 
-  if (loading) {
-    return <div>Carregando...</div>;
-  }
-
-  if (!isSuperAdmin) {
-    return <div>Acesso negado. Você não é um administrador supremo.</div>;
-  }
-
   return (
-    <div className="container mx-auto px-4 py-8">
+    <>
       <h1 className="text-3xl font-bold mb-4">Gerenciamento de Lojas</h1>
-
-      <div className="mb-8 p-4 border rounded-lg shadow-md">
-        <h2 className="text-2xl font-semibold mb-4">Adicionar Nova Loja</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <input
-            type="text"
-            placeholder="Nome da Loja"
-            value={newStore.name}
-            onChange={(e) => setNewStore({ ...newStore, name: e.target.value })}
-            className="border p-2 rounded w-full"
-          />
-          <input
-            type="text"
-            placeholder="Endereço"
-            value={newStore.address}
-            onChange={(e) =>
-              setNewStore({ ...newStore, address: e.target.value })
-            }
-            className="border p-2 rounded w-full"
-          />
-          <input
-            type="text"
-            placeholder="Cidade"
-            value={newStore.city}
-            onChange={(e) => setNewStore({ ...newStore, city: e.target.value })}
-            className="border p-2 rounded w-full"
-          />
-          <input
-            type="text"
-            placeholder="Estado"
-            value={newStore.state}
-            onChange={(e) => setNewStore({ ...newStore, state: e.target.value })}
-            className="border p-2 rounded w-full"
-          />
-          <input
-            type="text"
-            placeholder="CEP"
-            value={newStore.zipCode}
-            onChange={(e) =>
-              setNewStore({ ...newStore, zipCode: e.target.value })
-            }
-            className="border p-2 rounded w-full"
-          />
+      <div className="space-y-8">
+        {/* Formulário de Criação */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-2xl font-semibold mb-5 text-gray-800">Adicionar Nova Loja</h2>
+          <form onSubmit={handleAddStore} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <input name="name" type="text" placeholder="Nome da Loja" value={newStore.name} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" required />
+            <input name="address" type="text" placeholder="Endereço" value={newStore.address} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" required />
+            <input name="city" type="text" placeholder="Cidade" value={newStore.city} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" required />
+            <input name="state" type="text" placeholder="Estado" value={newStore.state} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" required />
+            <input name="zipCode" type="text" placeholder="CEP" value={newStore.zipCode} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" required />
+            <div className="md:col-span-2">
+              <button type="submit" disabled={isSubmitting} className="flex items-center justify-center px-6 py-3 font-semibold text-white bg-indigo-600 rounded-lg shadow-md">
+                {isSubmitting ? <Spinner size="h-5 w-5" /> : 'Adicionar Loja'}
+              </button>
+            </div>
+          </form>
         </div>
-        <button onClick={handleAddStore} className="bg-blue-500 text-white px-4 py-2 rounded mt-4">
-          Adicionar Loja
-        </button>
+
+        {/* Tabela de Lojas */}
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-2xl font-semibold mb-5 text-gray-800">Lojas Cadastradas</h2>
+          <div className="overflow-x-auto">
+            {isLoading ? <div className="flex justify-center p-8"><Spinner /></div> : (
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nome</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Endereço</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {stores.map(store => (
+                    <tr key={store.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{store.name}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{`${store.address}, ${store.city}, ${store.state} ${store.zipCode}`}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <button onClick={() => openEditModal(store)} className="text-indigo-600 hover:text-indigo-900">Editar</button>
+                        <button onClick={() => handleDeleteStore(store.id)} className="ml-4 text-red-600 hover:text-red-900">Excluir</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
       </div>
 
-      <h2 className="text-2xl font-semibold mb-4">Lojas Cadastradas</h2>
-      <ul>
-        {stores.map((store) => (
-          <li key={store.id} className="border p-4 mb-4 rounded shadow">
-            {editingStore && editingStore.id === store.id ? (
-              <div>
-                <h3 className="text-xl font-bold mb-2">Editando: {store.name}</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <input
-                    type="text"
-                    value={editingStore.name}
-                    onChange={(e) =>
-                      setEditingStore({ ...editingStore, name: e.target.value })
-                    }
-                    className="border p-2 rounded w-full"
-                  />
-                  <input
-                    type="text"
-                    value={editingStore.address}
-                    onChange={(e) =>
-                      setEditingStore({ ...editingStore, address: e.target.value })
-                    }
-                    className="border p-2 rounded w-full"
-                  />
-                  <input
-                    type="text"
-                    value={editingStore.city}
-                    onChange={(e) =>
-                      setEditingStore({ ...editingStore, city: e.target.value })
-                    }
-                    className="border p-2 rounded w-full"
-                  />
-                  <input
-                    type="text"
-                    value={editingStore.state}
-                    onChange={(e) =>
-                      setEditingStore({ ...editingStore, state: e.target.value })
-                    }
-                    className="border p-2 rounded w-full"
-                  />
-                  <input
-                    type="text"
-                    value={editingStore.zipCode}
-                    onChange={(e) =>
-                      setEditingStore({ ...editingStore, zipCode: e.target.value })
-                    }
-                    className="border p-2 rounded w-full"
-                  />
+      {/* Modal de Edição */}
+      {editingStore && (
+        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Editar Loja">
+            <div className="space-y-4">
+                <input name="name" type="text" value={editingStore.name} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <input name="address" type="text" value={editingStore.address} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <input name="city" type="text" value={editingStore.city} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <input name="state" type="text" value={editingStore.state} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <input name="zipCode" type="text" value={editingStore.zipCode} onChange={handleInputChange} className="w-full px-4 py-3 bg-gray-50 border rounded-lg" />
+                <div className="flex justify-end space-x-4 pt-4">
+                    <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-600">Cancelar</button>
+                    <button onClick={handleUpdateStore} disabled={isSubmitting} className="flex items-center px-4 py-2 text-white bg-indigo-600 rounded-lg">
+                        {isSubmitting ? <Spinner size="h-5 w-5" /> : 'Salvar Alterações'}
+                    </button>
                 </div>
-                <div className="mt-4">
-                  <button onClick={handleUpdateStore} className="bg-green-500 text-white px-4 py-2 rounded mr-2">
-                    Salvar
-                  </button>
-                  <button onClick={() => setEditingStore(null)} className="bg-gray-500 text-white px-4 py-2 rounded">
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <h3 className="text-xl font-bold">{store.name}</h3>
-                <p>Endereço: {store.address}, {store.city}, {store.state} - {store.zipCode}</p>
-                <div className="mt-4">
-                  <button onClick={() => handleEditStore(store)} className="bg-yellow-500 text-white px-4 py-2 rounded mr-2">
-                    Editar
-                  </button>
-                  <button onClick={() => handleDeleteStore(store.id!)} className="bg-red-500 text-white px-4 py-2 rounded">
-                    Excluir
-                  </button>
-                </div>
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
+            </div>
+        </Modal>
+      )}
+    </>
   );
 }
